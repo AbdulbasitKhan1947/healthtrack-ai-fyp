@@ -39,3 +39,40 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# =============== ADD THESE FOR BACKEND/PYTHON ===============
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+pythonenv*
+python-venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+venv/
+backend/venv/
+
+# PyCharm
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Database files
+*.db
+*.sqlite3
+*.sqlite
+
+# Neo4j (if you have any local files)
+data/
+logs/
+run/
