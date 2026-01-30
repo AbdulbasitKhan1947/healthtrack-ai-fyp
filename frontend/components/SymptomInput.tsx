@@ -1,50 +1,111 @@
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import debounce from 'lodash/debounce';
 
 interface SymptomInputProps {
   onAnalyze: (symptoms: string[]) => void;
   isLoading: boolean;
 }
 
-const COMMON_SYMPTOMS = [
-  "fever", "cough", "headache", "fatigue", "nausea",
-  "chest pain", "shortness of breath", "dizziness",
-  "abdominal pain", "sore throat", "runny nose", "body aches"
-];
+// Helper function to convert user input to database format
+const toDatabaseFormat = (text: string): string => {
+  return text.trim().toLowerCase().replace(/\s+/g, '_');
+};
+
+// Helper function to convert database format to display format
+const toDisplayFormat = (text: string): string => {
+  return text.replace(/_/g, ' ');
+};
 
 export default function SymptomInput({ onAnalyze, isLoading }: SymptomInputProps) {
   const [symptoms, setSymptoms] = useState<string[]>([]);
   const [inputValue, setInputValue] = useState('');
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const [error, setError] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
 
-  const handleAddSymptom = () => {
-    const symptom = inputValue.trim().toLowerCase();
+  // Debounced search function
+  const fetchSuggestions = useCallback(
+    debounce(async (query: string) => {
+      if (query.length < 2) {
+        setSuggestions([]);
+        setIsSearching(false);
+        return;
+      }
+
+      setIsSearching(true);
+      try {
+        // Convert to database format for search
+        const dbQuery = toDatabaseFormat(query);
+        console.log(`🔍 Searching for: "${query}" → "${dbQuery}"`);
+        
+        const response = await fetch(
+          `http://localhost:8000/symptoms/autocomplete?q=${encodeURIComponent(dbQuery)}`
+        );
+        const data = await response.json();
+        console.log('📦 API Response:', data);
+        
+        // Convert database format to display format
+        const displaySuggestions = (data.suggestions || []).map(toDisplayFormat);
+        setSuggestions(displaySuggestions);
+        
+      } catch (error) {
+        console.error('Error fetching suggestions:', error);
+        setSuggestions([]);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 300),
+    []
+  );
+
+  useEffect(() => {
+    fetchSuggestions(inputValue);
+  }, [inputValue, fetchSuggestions]);
+
+  const handleAddSymptom = (symptom?: string) => {
+    const symptomToAdd = symptom || inputValue.trim().toLowerCase();
     
-    if (!symptom) {
+    if (!symptomToAdd) {
       setError('Please enter a symptom');
       return;
     }
     
-    if (symptoms.includes(symptom)) {
+    // Convert to database format for storage
+    const dbSymptom = toDatabaseFormat(symptomToAdd);
+    
+    if (symptoms.includes(dbSymptom)) {
       setError('Symptom already added');
       return;
     }
     
-    setSymptoms([...symptoms, symptom]);
+    setSymptoms([...symptoms, dbSymptom]);
     setInputValue('');
+    setSuggestions([]);
+    setShowSuggestions(false);
     setError('');
+    console.log(`✅ Added symptom: "${symptomToAdd}" → "${dbSymptom}"`);
+  };
+
+  const handleSuggestionClick = (suggestion: string) => {
+    console.log(`🖱️ Clicked suggestion: "${suggestion}"`);
+    handleAddSymptom(suggestion);
   };
 
   const handleRemoveSymptom = (index: number) => {
     const newSymptoms = [...symptoms];
-    newSymptoms.splice(index, 1);
+    const removed = newSymptoms.splice(index, 1);
     setSymptoms(newSymptoms);
+    console.log(`🗑️ Removed symptom: "${removed[0]}"`);
   };
 
   const handleQuickAdd = (symptom: string) => {
-    if (!symptoms.includes(symptom)) {
-      setSymptoms([...symptoms, symptom]);
+    const dbSymptom = toDatabaseFormat(symptom);
+    if (!symptoms.includes(dbSymptom)) {
+      setSymptoms([...symptoms, dbSymptom]);
+      console.log(`⚡ Quick added: "${symptom}" → "${dbSymptom}"`);
     }
   };
 
@@ -54,13 +115,21 @@ export default function SymptomInput({ onAnalyze, isLoading }: SymptomInputProps
       return;
     }
     
+    console.log(`🚀 Analyzing ${symptoms.length} symptoms:`, symptoms);
     onAnalyze(symptoms);
   };
 
   const handleClearAll = () => {
+    console.log(`🧹 Cleared all ${symptoms.length} symptoms`);
     setSymptoms([]);
     setError('');
   };
+
+  const COMMON_SYMPTOMS = [
+    "fever", "cough", "headache", "fatigue", "nausea",
+    "chest pain", "shortness of breath", "dizziness",
+    "abdominal pain", "sore throat", "runny nose", "body aches"
+  ];
 
   return (
     <div className="bg-white rounded-xl shadow-lg p-6">
@@ -68,37 +137,90 @@ export default function SymptomInput({ onAnalyze, isLoading }: SymptomInputProps
         Enter Your Symptoms
       </h2>
 
-      {/* Input Field */}
-      <div className="mb-6">
+      {/* Input Field with Autocomplete */}
+      <div className="mb-6 relative">
         <label className="block text-sm font-medium text-gray-700 mb-2">
           Add a symptom:
         </label>
-        <div className="flex gap-2">
+        <div className="relative">
           <input
             type="text"
             value={inputValue}
             onChange={(e) => {
               setInputValue(e.target.value);
+              setShowSuggestions(true);
               setError('');
             }}
+            onFocus={() => setShowSuggestions(true)}
+            onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
             onKeyPress={(e) => {
               if (e.key === 'Enter') {
                 handleAddSymptom();
               }
             }}
-            placeholder="e.g., headache, fever, cough"
-            className="flex-grow p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none"
+            placeholder="Type at least 2 characters (e.g., muscle, pain, itching)"
+            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none"
           />
-          <button
-            onClick={handleAddSymptom}
-            className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors font-medium"
-          >
-            Add
-          </button>
+          
+          {/* Loading indicator */}
+          {isSearching && (
+            <div className="absolute right-3 top-3">
+              <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+            </div>
+          )}
+          
+          {/* Autocomplete Suggestions - HIGHLY VISIBLE VERSION */}
+          {showSuggestions && (suggestions.length > 0 || isSearching) && (
+            <div className="absolute z-50 w-full mt-1 bg-white border-2 border-blue-500 rounded-lg shadow-xl max-h-60 overflow-y-auto">
+              {isSearching ? (
+                <div className="px-4 py-3 text-blue-600 text-sm font-medium">
+                  🔍 Searching database...
+                </div>
+              ) : suggestions.length === 0 ? (
+                <div className="px-4 py-3 text-gray-500 text-sm">
+                  No symptoms found. Try different search terms.
+                </div>
+              ) : (
+                <>
+                  <div className="px-4 py-2 bg-blue-50 border-b border-blue-200">
+                    <p className="text-xs font-bold text-blue-700">
+                      🩺 FOUND {suggestions.length} MEDICAL SYMPTOMS:
+                    </p>
+                  </div>
+                  {suggestions.map((suggestion, index) => (
+                    <div
+                      key={index}
+                      className="px-4 py-3 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-b-0 group"
+                      onMouseDown={() => handleSuggestionClick(suggestion)}
+                    >
+                      <div className="flex items-center">
+                        <div className="w-8 h-8 bg-blue-500 text-white rounded-full flex items-center justify-center mr-3 group-hover:bg-blue-600">
+                          +
+                        </div>
+                        <div>
+                          <span className="text-gray-900 font-bold text-base">
+                            {suggestion}
+                          </span>
+                          <div className="text-gray-500 text-xs mt-1">
+                            Click to add this symptom
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+          )}
         </div>
+        
         {error && (
-          <p className="text-red-600 text-sm mt-2">{error}</p>
+          <p className="text-red-600 text-sm mt-2 font-medium">{error}</p>
         )}
+        
+        <div className="mt-2 text-sm text-gray-500">
+          💡 Type "muscle", "pain", or "itching" to see real medical symptoms
+        </div>
       </div>
 
       {/* Common Symptoms */}
@@ -109,11 +231,11 @@ export default function SymptomInput({ onAnalyze, isLoading }: SymptomInputProps
             <button
               key={symptom}
               onClick={() => handleQuickAdd(symptom)}
-              disabled={symptoms.includes(symptom)}
+              disabled={symptoms.includes(toDatabaseFormat(symptom))}
               className={`px-4 py-2 rounded-lg text-sm transition-colors ${
-                symptoms.includes(symptom)
-                  ? 'bg-blue-100 text-blue-800 border border-blue-300 cursor-default'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                symptoms.includes(toDatabaseFormat(symptom))
+                  ? 'bg-blue-500 text-white border border-blue-600 cursor-default'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200 hover:text-gray-900 border border-gray-300'
               }`}
             >
               {symptom}
@@ -131,7 +253,7 @@ export default function SymptomInput({ onAnalyze, isLoading }: SymptomInputProps
             </p>
             <button
               onClick={handleClearAll}
-              className="text-sm text-red-600 hover:text-red-800"
+              className="text-sm text-red-600 hover:text-red-800 font-medium"
             >
               Clear All
             </button>
@@ -140,12 +262,15 @@ export default function SymptomInput({ onAnalyze, isLoading }: SymptomInputProps
             {symptoms.map((symptom, index) => (
               <div
                 key={index}
-                className="bg-blue-50 border border-blue-200 rounded-full px-4 py-2 flex items-center gap-2"
+                className="bg-blue-100 border border-blue-300 rounded-full px-4 py-2 flex items-center gap-2"
               >
-                <span className="text-blue-800">{symptom}</span>
+                <span className="text-blue-800 font-medium">
+                  {toDisplayFormat(symptom)}
+                </span>
                 <button
                   onClick={() => handleRemoveSymptom(index)}
-                  className="text-blue-600 hover:text-blue-800 text-lg"
+                  className="text-blue-700 hover:text-blue-900 text-lg font-bold"
+                  aria-label={`Remove ${toDisplayFormat(symptom)}`}
                 >
                   ×
                 </button>
@@ -185,10 +310,10 @@ export default function SymptomInput({ onAnalyze, isLoading }: SymptomInputProps
       </div>
 
       {/* Instructions */}
-      <div className="mt-6 p-4 bg-blue-50 rounded-lg">
+      <div className="mt-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
         <p className="text-sm text-blue-800">
-          💡 <strong>Tip:</strong> Add multiple symptoms for more accurate results. 
-          The system will analyze symptom patterns to suggest possible conditions.
+          💡 <strong>Pro Tip:</strong> The database has 132 real medical symptoms. 
+          Try searching for: "muscle", "pain", "itching", "fever", or "cough"
         </p>
       </div>
     </div>

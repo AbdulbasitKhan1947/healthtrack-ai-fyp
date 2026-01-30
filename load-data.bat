@@ -1,0 +1,6 @@
+@echo off
+echo 🏥 Loading medical data into Neo4j...
+echo This may take a minute...
+echo.
+docker-compose run --rm data-loader
+pause

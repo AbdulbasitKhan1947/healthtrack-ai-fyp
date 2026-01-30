@@ -1,34 +1,94 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import SymptomInput from '../components/SymptomInput';
-import ResultsDisplay from '../components/ResultsDisplay';
-import GraphVisualization from '../components/GraphVisualization';
+import SymptomInput from '@/components/SymptomInput';
+import ResultsDisplay from '@/components/ResultsDisplay';
+import GraphVisualization from '@/components/GraphVisualization';
+import AuthModal from '../components/AuthModal';
+import DoctorRecommendation from '../components/DoctorRecommendation';
 
-// Common symptoms for quick selection
-const COMMON_SYMPTOMS = [
-  "fever", "cough", "headache", "fatigue", "nausea",
-  "chest pain", "shortness of breath", "dizziness",
-  "abdominal pain", "sore throat", "runny nose", "body aches"
-];
+// Define TypeScript interfaces
+interface DiseasePrediction {
+  disease: string;
+  confidence: number;
+  matching_symptoms: string[];
+  total_symptoms: number;
+  emergency: boolean;
+}
+
+interface AnalysisResponse {
+  predictions: DiseasePrediction[];
+  graph_data: any;
+  emergency_warning: string | null;
+  disclaimer: string;
+}
+
+interface UserData {
+  name: string;
+  email: string;
+  isLoggedIn: boolean;
+  age?: string;
+  gender?: string;
+  phone?: string;
+}
 
 export default function Home() {
   const [symptoms, setSymptoms] = useState<string[]>([]);
-  const [results, setResults] = useState<any>(null);
+  const [results, setResults] = useState<AnalysisResponse | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [userAge, setUserAge] = useState<number | ''>('');
-  const [userGender, setUserGender] = useState<string>('');
+  const [graphData, setGraphData] = useState<any>(null);
+  
+  // Authentication state
+  const [user, setUser] = useState<UserData | null>(null);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  
+  // Doctor recommendation state
+  const [selectedDisease, setSelectedDisease] = useState('');
+  const [showDoctorModal, setShowDoctorModal] = useState(false);
 
-  const handleAnalyze = async () => {
-    if (symptoms.length === 0) {
-      setError("Please add at least one symptom");
+  // Check login status on mount
+  useEffect(() => {
+    const savedUser = localStorage.getItem('healthtrack_user');
+    if (savedUser) {
+      try {
+        setUser(JSON.parse(savedUser));
+      } catch (error) {
+        console.error('Error parsing saved user:', error);
+        localStorage.removeItem('healthtrack_user');
+      }
+    }
+  }, []);
+
+  // Handle login
+  const handleLogin = (userData: UserData) => {
+    setUser(userData);
+    setShowAuthModal(false);
+  };
+
+  // Handle logout
+  const handleLogout = () => {
+    localStorage.removeItem('healthtrack_user');
+    setUser(null);
+    alert('Logged out successfully!');
+  };
+
+  // Show doctor recommendations for a disease
+  const handleShowDoctors = (disease: string) => {
+    if (!user) {
+      setShowAuthModal(true);
       return;
     }
+    setSelectedDisease(disease);
+    setShowDoctorModal(true);
+  };
 
+  // Main analysis function
+  const handleAnalyze = async (symptomList: string[]) => {
+    setSymptoms(symptomList);
     setLoading(true);
-    setError(null);
-
+    setResults(null);
+    setGraphData(null);
+    
     try {
       const response = await fetch('http://localhost:8000/analyze', {
         method: 'POST',
@@ -36,9 +96,9 @@ export default function Home() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          symptoms: symptoms,
-          user_age: userAge || null,
-          user_gender: userGender || null,
+          symptoms: symptomList,
+          user_age: user?.age ? parseInt(user.age) : undefined,
+          user_gender: user?.gender || undefined,
         }),
       });
 
@@ -46,284 +106,197 @@ export default function Home() {
         throw new Error(`API error: ${response.status}`);
       }
 
-      const data = await response.json();
+      const data: AnalysisResponse = await response.json();
       setResults(data);
-    } catch (err: any) {
-      setError(`Failed to analyze symptoms: ${err.message}`);
-      console.error('Analysis error:', err);
+      setGraphData(data.graph_data);
+    } catch (error) {
+      console.error('Error analyzing symptoms:', error);
+      setResults({
+        predictions: [],
+        graph_data: { nodes: [], links: [] },
+        emergency_warning: "Analysis failed. Please check your connection and try again.",
+        disclaimer: "System error occurred. Please try again later."
+      });
     } finally {
       setLoading(false);
     }
   };
 
-  const handleAddSymptom = (symptom: string) => {
-    if (symptom.trim() && !symptoms.includes(symptom.trim())) {
-      setSymptoms([...symptoms, symptom.trim()]);
-    }
-  };
-
-  const handleRemoveSymptom = (index: number) => {
-    const newSymptoms = [...symptoms];
-    newSymptoms.splice(index, 1);
-    setSymptoms(newSymptoms);
-  };
-
-  const handleClearAll = () => {
-    setSymptoms([]);
-    setResults(null);
-    setError(null);
-  };
-
-  // Test API connection on component mount
-  useEffect(() => {
-    const testConnection = async () => {
-      try {
-        const response = await fetch('http://localhost:8000/health');
-        if (response.ok) {
-          console.log('✅ Backend connection successful');
-        }
-      } catch (err) {
-        console.log('⚠️ Backend connection failed');
-      }
-    };
-    testConnection();
-  }, []);
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-white p-4 md:p-8">
-      {/* Header */}
-      <header className="text-center mb-8">
-        <h1 className="text-4xl font-bold text-blue-900 mb-2">
-          🩺 HealthTrack AI
-        </h1>
-        <p className="text-gray-600 mb-4">
-          Explainable Clinical Decision Support System
-        </p>
-        <div className="bg-blue-100 border-l-4 border-blue-500 p-4 rounded mb-6">
-          <p className="text-sm text-gray-700">
-            <strong>Disclaimer:</strong> This tool is for educational purposes only. 
-            It does not provide medical advice. Always consult a healthcare professional 
-            for medical concerns. In case of emergency, call your local emergency number.
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-green-50">
+      <div className="container mx-auto px-4 py-8">
+        {/* Header with Auth */}
+        <header className="mb-8">
+          <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+            <div className="text-center md:text-left">
+              <h1 className="text-4xl font-bold text-gray-800 mb-2">
+                🏥 HealthTrack AI
+              </h1>
+              <p className="text-gray-600">
+                Explainable Clinical Decision Support System
+              </p>
+            </div>
+            
+            {/* Auth Section */}
+            <div className="flex items-center gap-4">
+              {user ? (
+                <div className="flex flex-col md:flex-row items-center gap-3">
+                  <div className="text-center md:text-right">
+                    <p className="text-gray-700">
+                      Welcome, <strong>{user.name}</strong>!
+                    </p>
+                    {user.age && user.gender && (
+                      <p className="text-sm text-gray-500">
+                        {user.age} years, {user.gender}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleLogout}
+                      className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors text-sm font-medium"
+                    >
+                      Logout
+                    </button>
+                    <button
+                      onClick={() => setShowAuthModal(true)}
+                      className="px-4 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors text-sm font-medium"
+                    >
+                      Profile
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-2">
+                  <p className="text-sm text-gray-600">Get personalized recommendations</p>
+                  <button
+                    onClick={() => setShowAuthModal(true)}
+                    className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium shadow-sm"
+                  >
+                    Login / Signup
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </header>
+
+        {/* Main Content Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* Left Column - Input */}
+          <div className="lg:sticky lg:top-8">
+            <SymptomInput onAnalyze={handleAnalyze} isLoading={loading} />
+            
+            {/* User Benefits Card */}
+            {user && (
+              <div className="mt-6 p-4 bg-white rounded-xl shadow-md border border-green-200">
+                <h3 className="font-semibold text-green-700 mb-2">🌟 Personalized Features</h3>
+                <ul className="text-sm text-gray-600 space-y-1">
+                  <li>• Symptom history saved</li>
+                  <li>• Doctor recommendations for Haripur</li>
+                  <li>• Age/gender specific insights</li>
+                  <li>• Export health reports</li>
+                </ul>
+              </div>
+            )}
+          </div>
+
+          {/* Right Column - Results */}
+          <div className="space-y-8">
+            {results && (
+              <div className="bg-white rounded-xl shadow-lg p-6">
+                <div className="flex justify-between items-center mb-6">
+                  <h2 className="text-2xl font-semibold text-gray-800">
+                    Analysis Results
+                  </h2>
+                  {results.predictions.length > 0 && user && (
+                    <button
+                      onClick={() => handleShowDoctors(results.predictions[0].disease)}
+                      className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium flex items-center gap-2"
+                    >
+                      🩺 Find Doctors
+                    </button>
+                  )}
+                </div>
+                
+                <ResultsDisplay 
+                  results={results} 
+                  onFindDoctors={handleShowDoctors}
+                  isLoggedIn={!!user}
+                />
+              </div>
+            )}
+
+            {graphData && (
+              <div className="bg-white rounded-xl shadow-lg p-6">
+                <h2 className="text-2xl font-semibold text-gray-800 mb-6">
+                  Knowledge Graph Visualization
+                </h2>
+                <GraphVisualization graphData={graphData} isLoading={loading} />
+              </div>
+            )}
+
+            {/* Doctor Benefits Card */}
+            {!user && (
+              <div className="bg-gradient-to-r from-blue-100 to-purple-100 rounded-xl shadow-lg p-6 border border-blue-300">
+                <h3 className="text-xl font-bold text-gray-800 mb-3">
+                  🔒 Unlock Doctor Recommendations
+                </h3>
+                <p className="text-gray-700 mb-4">
+                  Create a free account to get personalized doctor recommendations in Haripur based on your symptoms.
+                </p>
+                <button
+                  onClick={() => setShowAuthModal(true)}
+                  className="px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:opacity-90 transition-opacity font-medium shadow-md"
+                >
+                  Sign Up for Free
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Mobile Tips */}
+        <div className="mt-8 p-4 bg-white rounded-lg shadow-md lg:hidden">
+          <p className="text-sm text-gray-600">
+            💡 <strong>Tip:</strong> On mobile, you may need to zoom in on the graph 
+            for better interaction. Tap on nodes to focus them.
           </p>
         </div>
-      </header>
 
-      <div className="max-w-7xl mx-auto">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Left Column - Input & Results */}
-          <div className="space-y-8">
-            {/* Symptom Input Section */}
-            <div className="bg-white rounded-xl shadow-lg p-6">
-              <h2 className="text-2xl font-semibold text-gray-800 mb-4">
-                Enter Symptoms
-              </h2>
-              
-              {/* User Information */}
-              <div className="grid grid-cols-2 gap-4 mb-6">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Age (Optional)
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="120"
-                    value={userAge}
-                    onChange={(e) => setUserAge(e.target.value ? parseInt(e.target.value) : '')}
-                    className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="e.g., 25"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Gender (Optional)
-                  </label>
-                  <select
-                    value={userGender}
-                    onChange={(e) => setUserGender(e.target.value)}
-                    className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  >
-                    <option value="">Select</option>
-                    <option value="male">Male</option>
-                    <option value="female">Female</option>
-                    <option value="other">Other</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Symptom Input */}
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Add Symptoms:
-                </label>
-                <div className="flex gap-2 mb-4">
-                  <input
-                    type="text"
-                    id="symptom-input"
-                    placeholder="e.g., headache, fever"
-                    className="flex-grow p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    onKeyPress={(e) => {
-                      if (e.key === 'Enter') {
-                        const input = (e.target as HTMLInputElement).value;
-                        if (input.trim()) {
-                          handleAddSymptom(input);
-                          (e.target as HTMLInputElement).value = '';
-                        }
-                      }
-                    }}
-                  />
-                  <button
-                    onClick={() => {
-                      const input = document.getElementById('symptom-input') as HTMLInputElement;
-                      if (input.value.trim()) {
-                        handleAddSymptom(input.value);
-                        input.value = '';
-                      }
-                    }}
-                    className="bg-blue-600 text-white px-4 py-3 rounded-lg hover:bg-blue-700 transition-colors"
-                  >
-                    Add
-                  </button>
-                </div>
-
-                {/* Common Symptoms */}
-                <div className="mb-4">
-                  <p className="text-sm text-gray-600 mb-2">Quick select common symptoms:</p>
-                  <div className="flex flex-wrap gap-2">
-                    {COMMON_SYMPTOMS.map((symptom) => (
-                      <button
-                        key={symptom}
-                        onClick={() => handleAddSymptom(symptom)}
-                        disabled={symptoms.includes(symptom)}
-                        className={`px-3 py-1.5 rounded-full text-sm transition-colors ${
-                          symptoms.includes(symptom)
-                            ? 'bg-blue-100 text-blue-800 border border-blue-300'
-                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                        }`}
-                      >
-                        {symptom}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Selected Symptoms */}
-                {symptoms.length > 0 && (
-                  <div className="mb-6">
-                    <p className="text-sm font-medium text-gray-700 mb-2">
-                      Selected Symptoms ({symptoms.length}):
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      {symptoms.map((symptom, index) => (
-                        <div
-                          key={index}
-                          className="bg-blue-50 border border-blue-200 rounded-full px-3 py-1.5 flex items-center gap-2"
-                        >
-                          <span className="text-blue-800">{symptom}</span>
-                          <button
-                            onClick={() => handleRemoveSymptom(index)}
-                            className="text-blue-600 hover:text-blue-800 text-sm"
-                          >
-                            ×
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Action Buttons */}
-                <div className="flex gap-4">
-                  <button
-                    onClick={handleAnalyze}
-                    disabled={loading || symptoms.length === 0}
-                    className={`flex-1 py-3 px-4 rounded-lg font-medium transition-colors ${
-                      loading || symptoms.length === 0
-                        ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                        : 'bg-green-600 text-white hover:bg-green-700'
-                    }`}
-                  >
-                    {loading ? (
-                      <span className="flex items-center justify-center gap-2">
-                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                        Analyzing...
-                      </span>
-                    ) : (
-                      'Analyze Symptoms'
-                    )}
-                  </button>
-                  <button
-                    onClick={handleClearAll}
-                    className="px-6 py-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
-                  >
-                    Clear All
-                  </button>
-                </div>
-              </div>
-
-              {/* Error Display */}
-              {error && (
-                <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
-                  <p className="text-red-700">{error}</p>
-                </div>
-              )}
-            </div>
-
-            {/* Results Display */}
-            <div className="bg-white rounded-xl shadow-lg p-6">
-              <h2 className="text-2xl font-semibold text-gray-800 mb-4">
-                Analysis Results
-              </h2>
-              {results ? (
-                <ResultsDisplay results={results} />
-              ) : (
-                <div className="text-center py-12 text-gray-500">
-                  <div className="text-5xl mb-4">🔍</div>
-                  <p>Submit symptoms to see analysis results</p>
-                  <p className="text-sm mt-2">The system will suggest possible conditions with confidence scores</p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Right Column - Graph Visualization */}
-          <div className="bg-white rounded-xl shadow-lg p-6">
-            <h2 className="text-2xl font-semibold text-gray-800 mb-4">
-              Knowledge Graph Visualization
-            </h2>
-            <p className="text-gray-600 mb-6">
-              Interactive visualization showing relationships between diseases and symptoms
-            </p>
-            
-            <GraphVisualization
-              graphData={results?.graph_data || null}
-              isLoading={loading}
-            />
-            
-            <div className="mt-6 p-4 bg-blue-50 rounded-lg">
-              <h3 className="font-medium text-blue-800 mb-2">How to use the graph:</h3>
-              <ul className="text-sm text-blue-700 space-y-1">
-                <li>• Red circles = Diseases</li>
-                <li>• Green circles = Your input symptoms</li>
-                <li>• Blue circles = Related symptoms</li>
-                <li>• Lines show relationships between diseases and symptoms</li>
-                <li>• Click on any node to focus on it</li>
-                <li>• Drag to move around the graph</li>
-              </ul>
-            </div>
-          </div>
+        {/* Safety Disclaimer */}
+        <div className="mt-8 p-4 bg-red-50 border border-red-200 rounded-lg">
+          <p className="text-red-700 font-medium text-center">
+            ⚠️ IMPORTANT: This is not medical advice. Always consult healthcare professionals for diagnosis and treatment.
+          </p>
+          <p className="text-red-600 text-sm mt-1 text-center">
+            Emergency symptoms like chest pain require immediate medical attention. Call 1122 for emergencies in Pakistan.
+          </p>
         </div>
 
         {/* Footer */}
-        <footer className="mt-12 pt-8 border-t border-gray-200 text-center text-gray-600 text-sm">
-          <p>HealthTrack AI - Final Year Project | Abdul Basit (B22F0359SE052)</p>
-          <p className="mt-1">Pak-Austria Fachhochschule, Haripur | Supervisor: Dr. Adnan Iqbal</p>
-          <p className="mt-4">
-            <strong>Note:</strong> This system uses a Neo4j graph database with limited medical data.
-            For production use, consult with medical professionals and use validated medical databases.
+        <footer className="mt-8 pt-6 border-t border-gray-200 text-center">
+          <p className="text-gray-600 text-sm">
+            HealthTrack AI © {new Date().getFullYear()} | 
+            Data: 41 diseases, 132 symptoms | 
+            Location: Haripur, Pakistan | 
+            <span className="text-green-600 ml-2">System Status: Operational ✅</span>
           </p>
         </footer>
       </div>
+
+      {/* Modals */}
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
+        onLogin={handleLogin}
+      />
+
+      <DoctorRecommendation
+        disease={selectedDisease}
+        isOpen={showDoctorModal}
+        onClose={() => setShowDoctorModal(false)}
+      />
     </div>
   );
 }
